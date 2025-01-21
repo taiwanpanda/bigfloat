@@ -12,15 +12,11 @@
 
 
 
-
-
-
-
-
 local bigfloat = {}
 bigfloat.__index = bigfloat
 
-type bigfloat = {buffer | number} --// {[1]: binaryData, [2]: exponentBits, [3]: mantissaBits,}
+type bigfloat = {buffer | number} --// {[1]: binaryData, [2]: exponentBits, [3]: mantissaBits}
+
 
 
 
@@ -102,6 +98,8 @@ end
 
 
 
+
+
 --===========================[[ AUXILARY: ITERATOR FUNCTIONS ]]===========================--
 
 
@@ -109,18 +107,18 @@ end
 function compositeQuads(b: buffer)
 	local idx = 0
 	
-	local function iterator(): (number, number, number, (b: buffer, offset: number, value: number) -> ())
+	local function iterator(): (number, number, (b: buffer, offset: number, value: number) -> (), number)
 		local remainingBytes = buffer.len(b) - idx
 		
 		if remainingBytes >= 4 then
 			idx += 4
-			return idx - 4, 4, buffer.readu32(b, idx - 4), buffer.readu32
+			return idx - 4, buffer.readu32(b, idx - 4), buffer.readu32, 4
 		elseif remainingBytes >= 2 then
 			idx += 2
-			return idx - 2, 2, buffer.readu16(b, idx - 2), buffer.readu16
+			return idx - 2, buffer.readu16(b, idx - 2), buffer.readu16, 2
 		elseif remainingBytes == 1 then
 			idx += 1
-			return idx - 1, 1, buffer.readu8(b, idx - 1), buffer.readu8
+			return idx - 1, buffer.readu8(b, idx - 1), buffer.readu8, 1
 		end
 	end
 	
@@ -128,8 +126,6 @@ function compositeQuads(b: buffer)
 end
 
 function binaryStringQuads(s: string)
-	local idx = 0
-
 	if string.gmatch(s, "[^01]")() then
 		error("String must be binary!")
 	end
@@ -137,25 +133,26 @@ function binaryStringQuads(s: string)
 	if #s / 8 % 1 ~= 0 then
 		error("String must comprise whole bytes.")
 	end
+	
+	local idx = 0
 
-	local function iterator(): (number, number, number, (b: buffer, offset: number, value: number) -> ())
+	local function iterator(): (number, number, (b: buffer, offset: number, value: number) -> (), number)
 		local remainingBytes = #s / 8 - idx
 
 		if remainingBytes >= 4 then
 			idx += 4
-			return idx - 4, 4, tonumber(string.sub(s, 8 * idx - 31, 8 * idx + 1), 2), buffer.readu32
+			return idx - 4, tonumber(string.sub(s, 8 * idx - 31, 8 * idx + 1), 2), buffer.readu32, 4
 		elseif remainingBytes >= 2 then
 			idx += 2
-			return idx - 2, 2, tonumber(string.sub(s, 8 * idx - 15, 8 * idx + 1), 2), buffer.readu16
+			return idx - 2, tonumber(string.sub(s, 8 * idx - 15, 8 * idx + 1), 2), buffer.readu16, 2
 		elseif remainingBytes == 1 then
 			idx += 1
-			return idx - 1, 1, tonumber(string.sub(s, 8 * idx - 7, 8 * idx + 1), 2), buffer.readu8
+			return idx - 1, tonumber(string.sub(s, 8 * idx - 7, 8 * idx + 1), 2), buffer.readu8, 1
 		end
 	end
 
 	return iterator
 end
-
 
 
 
@@ -264,7 +261,7 @@ function _writeStringToFloat(str: string, float: bigfloat)
 	
 	local floatString = sign .. exponent .. binary
 	
-	for i, chunkLength, chunk, write in binaryStringQuads(floatString) do
+	for i, chunk, write, length in binaryStringQuads(floatString) do
 		write(float[1], i, chunk)
 	end
 	
@@ -285,6 +282,7 @@ end
 function bigfloat.new(Value: number | string | nil) --// Creates a new bigfloat with the value if specified
 	--// TODO: this
 end
+
 
 
 
