@@ -81,7 +81,7 @@ function _calculateExponentLength(bytes: number)
 	local n = math.log(bytes, 2)
 	
 	return n % 1 == 0 and
-		OEIS_A222044(n) or
+		OEIS_A222044(n + 3) or
 		math.ceil(math.exp(math.pi * math.sqrt(n * 2 / 3)) / (n * 2 * math.sqrt(3))) + 2
 end
 
