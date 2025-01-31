@@ -343,7 +343,7 @@ function _writeNumberToFloat(number: number, float: bigfloat) --// type number i
 			local mantissaBits = 8 * length - exponentBits - signBits
 
 			local binaryChunk = 
-				sign * signBits * 2 ^ (8 * length - 1) + --// You were accidentally applying the sign to each chunk by forgetting to multiply by signBits
+				signBits * sign * 2 ^ (8 * length - 1) + --// You were accidentally applying the sign to each chunk by forgetting to multiply by signBits
 				_binarySub(biasedExponent, float[2], exponentIndex, exponentIndex + exponentBits) * 2 ^ (8 * length - exponentBits - signBits) +
 				_binarySub(mantissa, float[3], mantissaIndex, mantissaIndex + mantissaBits)
 
