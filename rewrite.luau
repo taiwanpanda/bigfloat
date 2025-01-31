@@ -13,7 +13,11 @@
 
 
 local bigfloat = {}
-bigfloat.__index = bigfloat
+
+local _mt = {}
+_mt.__index = _mt
+
+local exponentialFactor = math.log(2, 10)
 
 type bigfloat = {buffer | number} --// {[1]: binaryData, [2]: exponentBits, [3]: mantissaBits}
 
@@ -112,13 +116,13 @@ function compositeQuads(b: buffer)
 		
 		if remainingBytes >= 4 then
 			idx += 4
-			return idx - 4, buffer.readu32(b, idx - 4), buffer.readu32, 4
+			return idx - 4, buffer.readu32(b, idx - 4), buffer.writeu32, 4
 		elseif remainingBytes >= 2 then
 			idx += 2
-			return idx - 2, buffer.readu16(b, idx - 2), buffer.readu16, 2
+			return idx - 2, buffer.readu16(b, idx - 2), buffer.writeu16, 2
 		elseif remainingBytes == 1 then
 			idx += 1
-			return idx - 1, buffer.readu8(b, idx - 1), buffer.readu8, 1
+			return idx - 1, buffer.readu8(b, idx - 1), buffer.writeu8, 1
 		end
 	end
 	
@@ -138,16 +142,16 @@ function binaryStringQuads(s: string)
 
 	local function iterator(): (number, number, (b: buffer, offset: number, value: number) -> (), number)
 		local remainingBytes = #s / 8 - idx
-
-		if remainingBytes >= 4 then
+		
+				if remainingBytes >= 4 then
 			idx += 4
-			return idx - 4, tonumber(string.sub(s, 8 * idx - 31, 8 * idx + 1), 2), buffer.readu32, 4
+			return idx - 4, tonumber(string.sub(s, 8 * idx - 31, 8 * idx + 1), 2), buffer.writeu32, 4
 		elseif remainingBytes >= 2 then
 			idx += 2
-			return idx - 2, tonumber(string.sub(s, 8 * idx - 15, 8 * idx + 1), 2), buffer.readu16, 2
+			return idx - 2, tonumber(string.sub(s, 8 * idx - 15, 8 * idx + 1), 2), buffer.writeu16, 2
 		elseif remainingBytes == 1 then
 			idx += 1
-			return idx - 1, tonumber(string.sub(s, 8 * idx - 7, 8 * idx + 1), 2), buffer.readu8, 1
+			return idx - 1, tonumber(string.sub(s, 8 * idx - 7, 8 * idx + 1), 2), buffer.writeu8, 1
 		end
 	end
 
@@ -202,7 +206,7 @@ function _floorDivide2(str: string): (string, number)
 		remainder = divideResult[2]
 	end
 	
-	quotient = string.match(quotient, "^0+(%d+)")
+	quotient = string.match(quotient, "^0*(%d+)")
 	return quotient, remainder
 end
 
@@ -227,7 +231,7 @@ end
 function _wholeNumberToBinary(str: string): string
 	local binary, remainder = "", 0
 	
-	while str ~= "" do
+	while str ~= "0" do
 		str, remainder = _floorDivide2(str)
 		binary = math.sign(remainder) .. binary
 	end
@@ -251,21 +255,139 @@ end
 function _writeStringToFloat(str: string, float: bigfloat)
 	local sign, whole, fraction = string.match(string.gsub(str, "^(-?)(%.)", "%10%2"), "^(%--)(%d+)%.?(%d*)")
 	local wholeBinary, fractionBinary = _wholeNumberToBinary(whole), _fractionToBinary(`0{fraction}`, float[3])
+	
 	local binary = wholeBinary .. fractionBinary
 	local index = string.find(binary, "1")
+	
 	local exponent = #wholeBinary - index + 2 ^ (float[2] - 1) - 1
 	exponent = _wholeNumberToBinary(tostring(exponent))
 	exponent = string.rep("0", float[2] - #exponent) .. exponent
+	
 	binary = string.sub(binary, index + 1, index + float[3])
-	sign = sign == "-" and 1 or 0
+	
+	sign = sign == "-" and
+		1 or
+		0
 	
 	local floatString = sign .. exponent .. binary
 	
 	for i, chunk, write, length in binaryStringQuads(floatString) do
 		write(float[1], i, chunk)
 	end
+end
+
+
+
+
+
+
+
+
+--===========================[[ AUXILARY: NUMBER TO FLOAT ]]===========================--
+
+
+
+function _decimalToBits(decimal: number, mantissaLength: number): number
+	local bisemal = 0
 	
-	return float
+	for i = 1, mantissaLength do
+		local placeValue = 2 ^ -i
+		
+		if placeValue <= decimal then
+			decimal -= placeValue
+			bisemal += 2 ^ (mantissaLength - i)
+			
+			if decimal == 0 then
+				break
+			end
+		end
+	end
+	
+	return bisemal
+end
+
+function _binarySub(number, bitLength, i, j)
+	return number % 2 ^ (bitLength - i + 1) // 2 ^ (bitLength - j)
+end
+
+function _writeNumberToFloat(number: number, float: bigfloat) --// type number is a double (float64)
+	if float[2] <= 52 then --// the precision when calculating the biasedExponent will no longer be integer precision if the # of exponent bits exceeds 52
+		local floatLength = buffer.len(float[1])
+
+		local sign = 0 ^ math.max(math.sign(number), 0)
+		local absnumber = math.abs(number)
+
+		local exponent = math.floor(math.log(absnumber, 2))
+		local biasedExponent = 2 ^ (float[2] - 1) - 1 + exponent
+
+		local mantissa = _decimalToBits(absnumber / 2 ^ exponent % 1, math.min(float[3], 52)) --// number is always a double; only has 52 mantissa bits.
+
+		local transitionByte = math.floor((float[2] + 1) / 8)
+		local exponentIndex = 0
+		local mantissaIndex = 0
+
+		for i, _, write, length in compositeQuads(float[1]) do
+			local signBits = i == 0 and --// Byte composition, # of sign bits, # of exponent bits, # of mantissa bits
+				1 or
+				0
+
+			local exponentBits = math.max(
+				(
+					i + length < transitionByte and --// Check if these calculations are correct. (I think they are now)
+					math.min(float[2], 8 * length) or
+					8 * (transitionByte - i) + (float[3] % 8 > 0 and 8 - float[3] % 8 or 0)
+				) - signBits,
+				0
+			)
+	
+			local mantissaBits = 8 * length - exponentBits - signBits
+
+			local binaryChunk = 
+				sign * signBits * 2 ^ (8 * length - 1) + --// You were accidentally applying the sign to each chunk by forgetting to multiply by signBits
+				_binarySub(biasedExponent, float[2], exponentIndex, exponentIndex + exponentBits) * 2 ^ (8 * length - exponentBits - signBits) +
+				_binarySub(mantissa, float[3], mantissaIndex, mantissaIndex + mantissaBits)
+
+			exponentIndex += exponentBits
+			mantissaIndex += mantissaBits
+
+			write(float[1], floatLength - i - length, binaryChunk)
+		end
+	else
+		_writeStringToFloat(tostring(number), float) --// Replace this with use of bigfloats when possible
+	end
+end
+
+
+
+
+
+
+
+
+--===========================[[ AUXILARY: MISC ]]===========================--
+
+
+
+function _getFloatComposition(bytes: number): (number, number)
+	local exponentLength = GetExponentLength(bytes)
+	local mantissaLength = 8 * bytes - exponentLength - 1
+	
+	return exponentLength, mantissaLength
+end
+
+function bigfloat._getRangeUsingExponentLength(exponentLength: number): (string, string)
+	local bias = 2 ^ (exponentLength - 1)
+	local bias_10 = bias * exponentialFactor
+	
+	local minimum = bias_10 - exponentialFactor < 7
+		and `±{2 ^ (bias - 1)}` or
+		`±{10 ^ ((bias_10 - exponentialFactor) % 1)}e-{math.floor(bias_10 - exponentialFactor)}`
+
+	local maximum = bias_10 < 21
+		and `±{2 ^ bias}` or
+		`±{10 ^ (bias_10 % 1)}e+{math.floor(bias_10)}`
+	
+	return minimum, maximum
 end
 
 
@@ -279,8 +401,30 @@ end
 
 
 
-function bigfloat.new(Value: number | string | nil) --// Creates a new bigfloat with the value if specified
-	--// TODO: this
+function bigfloat.WriteValue(Value: number | string, float: bigfloat)
+	if typeof(Value) == "number" then
+		_writeNumberToFloat(Value, float)
+	elseif typeof(Value) == "string" then
+		_writeStringToFloat(Value, float)
+	end
+	
+	return float --// Convenience
+end
+
+function bigfloat.new(bytes: number, Value: number | string | nil) --// Creates a new bigfloat with the value if specified
+	local exponentLength, mantissaLength = _getFloatComposition(bytes)
+	
+	local float = setmetatable({buffer.create(bytes), exponentLength, mantissaLength}, _mt)
+	
+	if Value then
+		bigfloat.WriteValue(Value, float)
+	end
+	
+	return float
+end
+
+function bigfloat.GetRange(float: bigfloat)
+	return bigfloat._getRangeUsingExponentLength(float[2])
 end
 
 
