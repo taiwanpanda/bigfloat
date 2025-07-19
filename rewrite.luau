@@ -143,7 +143,7 @@ function binaryStringQuads(s: string)
 	local function iterator(): (number, number, (b: buffer, offset: number, value: number) -> (), number)
 		local remainingBytes = #s / 8 - idx
 		
-				if remainingBytes >= 4 then
+		if remainingBytes >= 4 then
 			idx += 4
 			return idx - 4, tonumber(string.sub(s, 8 * idx - 31, 8 * idx + 1), 2), buffer.writeu32, 4
 		elseif remainingBytes >= 2 then
